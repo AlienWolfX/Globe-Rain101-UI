@@ -19,6 +19,44 @@ static uint64_t previous_rx;
 static uint64_t previous_tx;
 static uint32_t previous_net_tick;
 static bool have_previous_net_sample;
+static bool has_displayed_sinr;
+static int displayed_sinr;
+static int displayed_signal_bars = -1;
+
+static void set_arc_value(void *object, int32_t value) {
+    lv_arc_set_value((lv_obj_t *)object, value);
+}
+
+static void set_bar_value(void *object, int32_t value) {
+    lv_bar_set_value((lv_obj_t *)object, value, LV_ANIM_OFF);
+}
+
+static void animate_bar(lv_obj_t *bar, int value, uint32_t delay) {
+    lv_anim_t animation;
+
+    lv_anim_delete(bar, set_bar_value);
+    lv_anim_init(&animation);
+    lv_anim_set_var(&animation, bar);
+    lv_anim_set_exec_cb(&animation, set_bar_value);
+    lv_anim_set_duration(&animation, 350);
+    lv_anim_set_delay(&animation, delay);
+    lv_anim_set_values(&animation, lv_bar_get_value(bar), value);
+    lv_anim_set_path_cb(&animation, lv_anim_path_ease_out);
+    lv_anim_start(&animation);
+}
+
+static void animate_sinr_arc(int value) {
+    lv_anim_t animation;
+
+    lv_anim_delete(objects.sinr_arc, set_arc_value);
+    lv_anim_init(&animation);
+    lv_anim_set_var(&animation, objects.sinr_arc);
+    lv_anim_set_exec_cb(&animation, set_arc_value);
+    lv_anim_set_duration(&animation, 700);
+    lv_anim_set_values(&animation, lv_arc_get_value(objects.sinr_arc), value);
+    lv_anim_set_path_cb(&animation, lv_anim_path_ease_out);
+    lv_anim_start(&animation);
+}
 
 static bool read_int_file(const char *path, int *value) {
     FILE *file = fopen(path, "r");
@@ -158,6 +196,16 @@ static void poll_modem(void) {
     char plmn[32] = "";
     char combo_band[64] = "";
     char ps_eact[64] = "";
+    char sinr_text[32] = "";
+    char cell_id[32] = "";
+    char imei[32] = "";
+    char imsi[32] = "";
+    char enodeb_id[32] = "";
+    char nr_rsrp[32] = "";
+    char nr_sinr[32] = "";
+    char code[16] = "";
+    char cnum[32] = "";
+    int sinr_db;
     FILE *pipe = popen(MODEM_COMMAND, "r");
     size_t used = 0;
 
@@ -178,8 +226,27 @@ static void poll_modem(void) {
     }
     copy_json_field(json, "combo_band", combo_band, sizeof(combo_band));
     copy_json_field(json, "PS_eAct", ps_eact, sizeof(ps_eact));
+    copy_json_field(json, "sinr", sinr_text, sizeof(sinr_text));
+    copy_json_field(json, "cell_id", cell_id, sizeof(cell_id));
+    copy_json_field(json, "imei", imei, sizeof(imei));
+    copy_json_field(json, "imsi", imsi, sizeof(imsi));
+    copy_json_field(json, "eNodeBID", enodeb_id, sizeof(enodeb_id));
+    copy_json_field(json, "SSB_RSRP", nr_rsrp, sizeof(nr_rsrp));
+    copy_json_field(json, "SSB_SINR", nr_sinr, sizeof(nr_sinr));
+    copy_json_field(json, "code", code, sizeof(code));
+    copy_json_field(json, "cnum", cnum, sizeof(cnum));
+    if (sscanf(sinr_text, "%d", &sinr_db) == 1) {
+        status.sinr_db = sinr_db;
+        status.has_sinr = true;
+    }
     snprintf(status.carrier, sizeof(status.carrier), "%s", carrier_for_plmn(plmn));
     snprintf(status.radio, sizeof(status.radio), "%s", radio_for_values(ps_eact, combo_band));
+    snprintf(status.info_text, sizeof(status.info_text),
+             "Cell: %s\nIMEI: %s\nIMSI: %s\neNodeB: %s\nPLMN: %s\nBand: %s\n"
+             "Mode: %s\nCode: %s\nNR RSRP: %s\nNR SSB SINR: %s\nSINR: %s\n"
+             "Number: %s",
+             cell_id, imei, imsi, enodeb_id, plmn, combo_band, ps_eact,
+             code, nr_rsrp, nr_sinr, sinr_text, cnum);
 }
 
 static void poll_network(uint32_t now) {
@@ -243,6 +310,12 @@ static void update_clock(uint32_t now) {
 
 void telemetry_init(void) {
     memset(&status, 0, sizeof(status));
+    lv_bar_set_value(objects.bar_1, 0, LV_ANIM_OFF);
+    lv_bar_set_value(objects.bar_2, 0, LV_ANIM_OFF);
+    lv_bar_set_value(objects.bar_3, 0, LV_ANIM_OFF);
+    lv_bar_set_value(objects.bar_4, 0, LV_ANIM_OFF);
+    lv_bar_set_value(objects.bar_5, 0, LV_ANIM_OFF);
+    displayed_signal_bars = -1;
     status.state[0] = '\0';
     boot_epoch = (uint32_t)time(NULL) - lv_tick_get() / 1000;
     snprintf(status.carrier, sizeof(status.carrier), "PLMN Unknown");
@@ -275,11 +348,21 @@ void telemetry_refresh_ui(void) {
     lv_label_set_text(objects.date_label, status.date_text);
     lv_label_set_text(objects.telco_label, status.carrier);
     lv_label_set_text(objects.network_label, status.radio);
-    lv_bar_set_value(objects.bar_1, status.signal_bars >= 1 ? 100 : 0, LV_ANIM_OFF);
-    lv_bar_set_value(objects.bar_2, status.signal_bars >= 2 ? 100 : 0, LV_ANIM_OFF);
-    lv_bar_set_value(objects.bar_3, status.signal_bars >= 3 ? 100 : 0, LV_ANIM_OFF);
-    lv_bar_set_value(objects.bar_4, status.signal_bars >= 4 ? 100 : 0, LV_ANIM_OFF);
-    lv_bar_set_value(objects.bar_5, status.signal_bars >= 5 ? 100 : 0, LV_ANIM_OFF);
+    lv_label_set_text(objects.info_label, status.info_text);
+    lv_arc_set_range(objects.sinr_arc, -20, 30);
+    if (status.has_sinr && (!has_displayed_sinr || displayed_sinr != status.sinr_db)) {
+        animate_sinr_arc(status.sinr_db);
+        displayed_sinr = status.sinr_db;
+        has_displayed_sinr = true;
+    }
+    if (displayed_signal_bars != status.signal_bars) {
+        animate_bar(objects.bar_1, status.signal_bars >= 1 ? 100 : 0, 0);
+        animate_bar(objects.bar_2, status.signal_bars >= 2 ? 100 : 0, 120);
+        animate_bar(objects.bar_3, status.signal_bars >= 3 ? 100 : 0, 240);
+        animate_bar(objects.bar_4, status.signal_bars >= 4 ? 100 : 0, 360);
+        animate_bar(objects.bar_5, status.signal_bars >= 5 ? 100 : 0, 480);
+        displayed_signal_bars = status.signal_bars;
+    }
     status.last_ui_tick = now;
 }
 

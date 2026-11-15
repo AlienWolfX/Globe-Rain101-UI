@@ -3,6 +3,7 @@
 
 #define LV_COLOR_DEPTH 32
 #define LV_USE_LINUX_FBDEV 1
+#define LV_USE_EVDEV 1
 
 #define LV_USE_LOG 1
 #define LV_LOG_LEVEL LV_LOG_LEVEL_WARN

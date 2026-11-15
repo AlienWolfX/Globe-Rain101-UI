@@ -9,6 +9,7 @@
 typedef struct {
     int rsrp_dbm;
     int signal_bars;
+    int sinr_db;
     float rx_mbps;
     float tx_mbps;
     char carrier[32];
@@ -16,10 +17,12 @@ typedef struct {
     char interface_name[16];
     char time_text[16];
     char date_text[32];
+    char info_text[512];
     char state[16];
     uint32_t last_poll_tick;
     uint32_t last_ui_tick;
     bool has_rsrp;
+    bool has_sinr;
 } telemetry_status_t;
 
 void telemetry_init(void);
