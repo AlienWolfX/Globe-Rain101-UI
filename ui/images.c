@@ -1,6 +1,6 @@
 #include "images.h"
 
-const ext_img_desc_t images[16] = {
+const ext_img_desc_t images[21] = {
     { "Router", &img_router },
     { "Thermometer", &img_thermometer },
     { "Horizontal Rule", &img_horizontal_rule },
@@ -17,4 +17,9 @@ const ext_img_desc_t images[16] = {
     { "Start", &img_start },
     { "WiFi_Device", &img_wi_fi_device },
     { "Network", &img_network },
+    { "Download", &img_download },
+    { "Upload", &img_upload },
+    { "Ping", &img_ping },
+    { "Speed_Test", &img_speed_test },
+    { "Start_Test", &img_start_test },
 };

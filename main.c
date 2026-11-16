@@ -89,6 +89,11 @@ static void nav_cb(lv_event_t *event) {
     go_to_screen((enum ScreensEnum)(intptr_t)lv_event_get_user_data(event));
 }
 
+static void start_speed_test_cb(lv_event_t *event) {
+    (void)event;
+    telemetry_start_speed_test();
+}
+
 /* ---- wifi QR (cached) ---------------------------------------------------- */
 
 typedef struct {
@@ -209,6 +214,8 @@ static void install_screen_navigation(void) {
         { objects.wifi_back_icon, SCREEN_ID_SETTINGS },
         { objects.qr_back_icon,   SCREEN_ID_WIFI },
         { objects.info_back_icon, SCREEN_ID_SETTINGS },
+        { objects.speed_test_icon, SCREEN_ID_SPEED_TEST },
+        { objects.speed_test_back_icon, SCREEN_ID_SETTINGS },
     };
     const struct {
         lv_obj_t *obj;
@@ -230,6 +237,10 @@ static void install_screen_navigation(void) {
         lv_obj_add_event_cb(qr[i].obj, wifi_qr_cb, LV_EVENT_PRESSED,
                             (void *)(intptr_t)qr[i].band);
     }
+    lv_obj_add_flag(objects.start_test_icon, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_ext_click_area(objects.start_test_icon, 12);
+    lv_obj_add_event_cb(objects.start_test_icon, start_speed_test_cb,
+                        LV_EVENT_PRESSED, NULL);
     /* The SINR arc covers the whole main screen and is clickable by default,
      * so a touch could drag its knob. It is display-only. */
     lv_obj_remove_flag(objects.sinr_arc, LV_OBJ_FLAG_CLICKABLE);

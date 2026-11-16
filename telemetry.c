@@ -2,6 +2,7 @@
 
 #include "telemetry.h"
 
+#include "carrier.h"
 #include "lvgl.h"
 #include "ui/screens.h"
 
@@ -10,31 +11,33 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
 
-#define MODEM_COMMAND "ubus -S call mtk.cell get_device_info 2>/dev/null"
+#define GET_DEVICE_INFO "ubus -S call mtk.cell get_device_info 2>/dev/null"
+#define GET_CONNECTED_DEVICES_COUNT "ubus call jytl_api ue_get 2>/dev/null"
+#define SPEED_TEST_COMMAND "/usr/bin/librespeed-cli --json --concurrent 8 --no-icmp --local-json \"/bin/lvgl/globe-unlimited.json\" 2>/dev/null"
+#define DEVICE_TEMP "/sys/class/thermal/thermal_zone0/temp"
+#define DEVICE_CPU_STAT "/proc/stat"
+#define DEVICE_MEM_INFO "/proc/meminfo"
+#define SSB_RSRP_5G "/var/run/ModemInfo/current_slot/5G/SSB_RSRP"
+#define RSRP_5G "/var/run/ModemInfo/current_slot/5G/RSRP"
+#define RSRP_4G "/var/run/ModemInfo/current_slot/4G/RSRP"
+
 #define MODEM_JSON_SIZE 8192
 #define DISPLAY_UTC_OFFSET_SECONDS (8 * 60 * 60)
-
-/* The worker wakes every second (cheap: a few small /proc and sysfs reads).
- * The expensive fork+exec of ubus runs once every MODEM_POLL_DIVIDER wakeups. */
 #define MODEM_POLL_DIVIDER 3
-
-/* Connected devices: one "mac" entry per client in the ue_get reply. */
-#define DEVICE_COMMAND "ubus call jytl_api ue_get 2>/dev/null"
 #define DEVICE_POLL_DIVIDER 5
 
-/* time() earlier than this means the router has not synced its clock yet. */
-#define CLOCK_VALID_AFTER 1577836800    /* 2020-01-01 */
+#define CLOCK_VALID_AFTER 1767196800
 
-/* Only what the UI actually shows. */
 typedef struct {
     int signal_bars;
     int sinr_db;
     bool has_sinr;
-    int connected_devices;      /* -1 until the first successful poll */
+    int connected_devices;
     char carrier[32];
     char radio[16];
     char temperature_text[16];
@@ -42,19 +45,22 @@ typedef struct {
     char memory_load_text[16];
     char imei_text[32];
     char cnum_text[32];
+    bool speed_test_running;
+    bool speed_test_done;
+    bool speed_test_failed;
+    char speed_download_text[24];
+    char speed_upload_text[24];
+    char speed_ping_text[24];
 } telemetry_status_t;
 
-/* Written by the worker thread, read by the UI thread; guarded by status_mutex. */
 static telemetry_status_t status;
 static pthread_mutex_t status_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-/* UI-thread-only state. */
 static bool has_displayed_sinr;
 static int displayed_sinr;
 static int displayed_signal_bars = -1;
 static int displayed_connected_devices = -1;
 
-/* Worker-thread-only state (no lock needed). */
 static uint64_t previous_cpu_total;
 static uint64_t previous_cpu_idle;
 static bool have_previous_cpu_sample;
@@ -85,12 +91,12 @@ static void read_system_metrics(telemetry_status_t *out) {
     unsigned long long user, nice, system, idle, iowait, irq, softirq, steal;
     FILE *file;
 
-    if (read_int_file("/sys/class/thermal/thermal_zone0/temp", &millidegrees)) {
+    if (read_int_file(DEVICE_TEMP, &millidegrees)) {
         snprintf(out->temperature_text, sizeof(out->temperature_text),
                  "%.1fC", millidegrees / 1000.0);
     }
 
-    file = fopen("/proc/stat", "r");
+    file = fopen(DEVICE_CPU_STAT, "r");
     if (file) {
         char cpu[8];
         if (fscanf(file, "%7s %llu %llu %llu %llu %llu %llu %llu %llu",
@@ -117,9 +123,7 @@ static void read_system_metrics(telemetry_status_t *out) {
         fclose(file);
     }
 
-    /* MemTotal and MemAvailable are within the first few lines: stop reading
-     * as soon as both are found instead of parsing the whole file. */
-    file = fopen("/proc/meminfo", "r");
+    file = fopen(DEVICE_MEM_INFO, "r");
     if (file) {
         char line[96];
         while ((total_kb == 0 || available_kb == 0) && fgets(line, sizeof(line), file)) {
@@ -147,9 +151,9 @@ static int signal_level(int rsrp) {
 
 static bool read_max_rsrp(int *result) {
     static const char *const paths[] = {
-        "/var/run/ModemInfo/current_slot/5G/SSB_RSRP",
-        "/var/run/ModemInfo/current_slot/5G/RSRP",
-        "/var/run/ModemInfo/current_slot/4G/RSRP"
+        SSB_RSRP_5G,
+        RSRP_5G,
+        RSRP_4G
     };
     bool found = false;
     int maximum = -1000;
@@ -215,31 +219,67 @@ static void copy_json_field(const char *json, const char *key, char *destination
     }
 }
 
-static const char *carrier_for_plmn(const char *plmn) {
-    static const struct {
-        const char *code;
-        const char *name;
-    } codes[] = {
-        {"51501", "Globe"},   /* Innove Communications / Islacom (Globe) */
-        {"51502", "Globe"},   /* Globe Telecom (Primary) */
-        {"51503", "Smart"},   /* Smart Communications (PLDT) */
-        {"51505", "Sun"},     /* Digitel / Sun Cellular (merged into Smart) */
-        {"51511", "PLDT"},    /* PLDT via ACeS Philippines */
-        {"51518", "Cure"},    /* Connectivity Unlimited Resources (Smart/PLDT) */
-        {"51566", "DITO"},    /* DITO Telecommunity */
-        {"51588", "Next"}     /* Next Mobile Inc. */
-    };
+static bool format_speed_value(const char *json, const char *key,
+                               char *destination, size_t size) {
+    char value[32];
+    char *end;
+    double number;
 
-    for (size_t i = 0; i < sizeof(codes) / sizeof(codes[0]); ++i) {
-        if (strcmp(plmn, codes[i].code) == 0) {
-            return codes[i].name;
-        }
+    if (!json_value(json, key, value, sizeof(value))) {
+        return false;
     }
-    return "";
+    number = strtod(value, &end);
+    if (end == value || *end != '\0') {
+        return false;
+    }
+    snprintf(destination, size, "%.0f", number);
+    return true;
 }
 
-static const char *radio_for_values(const char *ps_eact, const char *combo_band) {
-    const char *values[] = {ps_eact, combo_band};
+static void *speed_test_worker(void *arg) {
+    char json[2048];
+    char download[24];
+    char upload[24];
+    char ping[24];
+    size_t used = 0;
+    bool valid = false;
+    FILE *pipe;
+
+    (void)arg;
+    pipe = popen(SPEED_TEST_COMMAND, "r");
+    if (pipe) {
+        while (used + 1 < sizeof(json)) {
+            size_t count = fread(json + used, 1, sizeof(json) - used - 1, pipe);
+            used += count;
+            if (count == 0) {
+                break;
+            }
+        }
+        json[used] = '\0';
+        valid = format_speed_value(json, "download", download, sizeof(download)) &&
+                format_speed_value(json, "upload", upload, sizeof(upload)) &&
+                format_speed_value(json, "ping", ping, sizeof(ping));
+        pclose(pipe);
+    }
+
+    pthread_mutex_lock(&status_mutex);
+    status.speed_test_running = false;
+    status.speed_test_done = true;
+    status.speed_test_failed = !valid;
+    if (valid) {
+        snprintf(status.speed_download_text, sizeof(status.speed_download_text),
+                 "%s", download);
+        snprintf(status.speed_upload_text, sizeof(status.speed_upload_text),
+                 "%s", upload);
+        snprintf(status.speed_ping_text, sizeof(status.speed_ping_text),
+                 "%s", ping);
+    }
+    pthread_mutex_unlock(&status_mutex);
+    return NULL;
+}
+
+static const char *radio_for_values(const char *ps_eact) {
+    const char *values[] = {ps_eact};
     for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); ++i) {
         if (strstr(values[i], "NSA") || strstr(values[i], "ENDC")) return "5G NSA";
         if (strstr(values[i], "SA")) return "5G SA";
@@ -251,7 +291,6 @@ static const char *radio_for_values(const char *ps_eact, const char *combo_band)
     return "3";
 }
 
-/* Runs WITHOUT status_mutex held; writes into the caller's private copy. */
 static void poll_modem(telemetry_status_t *out) {
     char json[MODEM_JSON_SIZE];
     char plmn[32] = "";
@@ -262,7 +301,7 @@ static void poll_modem(telemetry_status_t *out) {
     char cnum[32] = "";
     int sinr_db;
     size_t used = 0;
-    FILE *pipe = popen(MODEM_COMMAND, "r");
+    FILE *pipe = popen(GET_DEVICE_INFO, "r");
 
     if (!pipe) {
         return;
@@ -275,8 +314,6 @@ static void poll_modem(telemetry_status_t *out) {
     json[used] = '\0';
     pclose(pipe);
 
-    /* No output (ubus busy / modem restarting): keep the last good values
-     * instead of flashing "Unknown" on screen. */
     if (used == 0) {
         return;
     }
@@ -285,7 +322,7 @@ static void poll_modem(telemetry_status_t *out) {
     if (plmn[0] == '\0') {
         copy_json_field(json, "plmn", plmn, sizeof(plmn));
     }
-    copy_json_field(json, "combo_band", combo_band, sizeof(combo_band));
+    copy_json_field(json, "combo_band", combo_band, sizeof(combo_band)); // TODO Combo Band
     copy_json_field(json, "PS_eAct", ps_eact, sizeof(ps_eact));
     copy_json_field(json, "sinr", sinr_text, sizeof(sinr_text));
     copy_json_field(json, "imei", imei, sizeof(imei));
@@ -303,28 +340,33 @@ static void poll_modem(telemetry_status_t *out) {
     if (plmn[0] != '\0') {
         snprintf(out->carrier, sizeof(out->carrier), "%s", carrier_for_plmn(plmn));
     }
-    snprintf(out->radio, sizeof(out->radio), "%s", radio_for_values(ps_eact, combo_band));
+    snprintf(out->radio, sizeof(out->radio), "%s", radio_for_values(ps_eact));
 }
 
-/* Counts the "mac" keys in `ubus call jytl_api ue_get` (the same number as
- * `... | grep -c '"mac"'`). Streams the output line by line, so the reply size
- * does not matter, and counts every occurrence so compact JSON works too.
- * Leaves *count untouched if ubus produced no output (busy / not ready). */
 static void poll_devices(int *count) {
     char line[256];
     int found = 0;
     bool got_output = false;
-    FILE *pipe = popen(DEVICE_COMMAND, "r");
+    bool offline_list_seen = false;
+    FILE *pipe = popen(GET_CONNECTED_DEVICES_COUNT, "r");
 
     if (!pipe) {
         return;
     }
     while (fgets(line, sizeof(line), pipe)) {
         const char *cursor = line;
+        const char *offline_list = strstr(line, "\"offline_list\"");
         got_output = true;
-        while ((cursor = strstr(cursor, "\"mac\"")) != NULL) {
-            ++found;
-            cursor += 5;
+
+        if (offline_list) {
+            offline_list_seen = true;
+        }
+        if (!offline_list_seen || offline_list) {
+            const char *end = offline_list ? offline_list : line + strlen(line);
+            while ((cursor = strstr(cursor, "\"mac\"")) != NULL && cursor < end) {
+                ++found;
+                cursor += 5;
+            }
         }
     }
     pclose(pipe);
@@ -335,8 +377,6 @@ static void poll_devices(int *count) {
 
 /* ---- UI helpers (UI thread only) ----------------------------------------- */
 
-/* lv_label_set_text() always invalidates; every invalidation costs a panel
- * commit, so only touch LVGL when the text really changed. */
 static void set_label_if_changed(lv_obj_t *label, const char *text) {
     const char *current = lv_label_get_text(label);
     if (!current || strcmp(current, text) != 0) {
@@ -385,7 +425,7 @@ void telemetry_init(void) {
     status.connected_devices = -1;
     snprintf(status.radio, sizeof(status.radio), "3");
     set_signal_bars(0);
-    lv_arc_set_range(objects.sinr_arc, -20, 30);   /* once, not every refresh */
+    lv_arc_set_range(objects.sinr_arc, -20, 30);
     displayed_signal_bars = -1;
 }
 
@@ -410,9 +450,20 @@ static void telemetry_poll(void) {
     read_system_metrics(&local);
 
     pthread_mutex_lock(&status_mutex);
+    local.speed_test_running = status.speed_test_running;
+    local.speed_test_done = status.speed_test_done;
+    local.speed_test_failed = status.speed_test_failed;
+    snprintf(local.speed_download_text, sizeof(local.speed_download_text),
+             "%s", status.speed_download_text);
+    snprintf(local.speed_upload_text, sizeof(local.speed_upload_text),
+             "%s", status.speed_upload_text);
+    snprintf(local.speed_ping_text, sizeof(local.speed_ping_text),
+             "%s", status.speed_ping_text);
     status = local;
     pthread_mutex_unlock(&status_mutex);
 }
+
+// UI Display
 
 void telemetry_refresh_ui(void) {
     telemetry_status_t snapshot;
@@ -421,7 +472,6 @@ void telemetry_refresh_ui(void) {
     snapshot = status;
     pthread_mutex_unlock(&status_mutex);
 
-    /* All LVGL calls below run without the lock. */
     refresh_clock();
     set_label_if_changed(objects.telco_label, snapshot.carrier);
     set_label_if_changed(objects.network_label, snapshot.radio);
@@ -439,6 +489,17 @@ void telemetry_refresh_ui(void) {
     }
     if (snapshot.imei_text[0] != '\0') {
         set_label_if_changed(objects.imei_label, snapshot.imei_text);
+    }
+    if (snapshot.speed_test_running) {
+        set_label_if_changed(objects.status_label, "Running");
+    } else if (snapshot.speed_test_done) {
+        set_label_if_changed(objects.status_label,
+                             snapshot.speed_test_failed ? "Error" : "Done");
+        if (!snapshot.speed_test_failed) {
+            set_label_if_changed(objects.download_label, snapshot.speed_download_text);
+            set_label_if_changed(objects.upload_label, snapshot.speed_upload_text);
+            set_label_if_changed(objects.ping_label, snapshot.speed_ping_text);
+        }
     }
     if (snapshot.connected_devices >= 0 &&
         snapshot.connected_devices != displayed_connected_devices) {
@@ -478,4 +539,32 @@ void telemetry_start(void) {
     } else {
         pthread_detach(thread);
     }
+}
+
+void telemetry_start_speed_test(void) {
+    pthread_t thread;
+
+    pthread_mutex_lock(&status_mutex);
+    if (status.speed_test_running) {
+        pthread_mutex_unlock(&status_mutex);
+        return;
+    }
+    status.speed_test_running = true;
+    status.speed_test_done = false;
+    status.speed_test_failed = false;
+    status.speed_download_text[0] = '\0';
+    status.speed_upload_text[0] = '\0';
+    status.speed_ping_text[0] = '\0';
+    pthread_mutex_unlock(&status_mutex);
+
+    if (pthread_create(&thread, NULL, speed_test_worker, NULL) != 0) {
+        pthread_mutex_lock(&status_mutex);
+        status.speed_test_running = false;
+        status.speed_test_done = true;
+        status.speed_test_failed = true;
+        pthread_mutex_unlock(&status_mutex);
+        fprintf(stderr, "[telemetry] failed to start speed test\n");
+        return;
+    }
+    pthread_detach(thread);
 }

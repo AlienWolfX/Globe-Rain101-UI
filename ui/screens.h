@@ -16,7 +16,8 @@ enum ScreensEnum {
     SCREEN_ID_WIFI = 3,
     SCREEN_ID_QR_WIFI = 4,
     SCREEN_ID_INFO = 5,
-    _SCREEN_ID_LAST = 5
+    SCREEN_ID_SPEED_TEST = 6,
+    _SCREEN_ID_LAST = 6
 };
 
 typedef struct _objects_t {
@@ -25,6 +26,7 @@ typedef struct _objects_t {
     lv_obj_t *wifi;
     lv_obj_t *qr_wifi;
     lv_obj_t *info;
+    lv_obj_t *speed_test;
     lv_obj_t *time_label;
     lv_obj_t *date_label;
     lv_obj_t *bar_1;
@@ -39,6 +41,7 @@ typedef struct _objects_t {
     lv_obj_t *settings_label;
     lv_obj_t *back_icon;
     lv_obj_t *info_icon;
+    lv_obj_t *speed_test_icon;
     lv_obj_t *wifi_label;
     lv_obj_t *wifi_back_icon;
     lv_obj_t *wifi_2g_icon;
@@ -61,6 +64,16 @@ typedef struct _objects_t {
     lv_obj_t *imei_icon;
     lv_obj_t *phone_number;
     lv_obj_t *imei_label;
+    lv_obj_t *download_icon;
+    lv_obj_t *upload_icon;
+    lv_obj_t *ping_icon;
+    lv_obj_t *speed_test_label;
+    lv_obj_t *download_label;
+    lv_obj_t *ping_label;
+    lv_obj_t *upload_label;
+    lv_obj_t *speed_test_back_icon;
+    lv_obj_t *start_test_icon;
+    lv_obj_t *status_label;
 } objects_t;
 
 extern objects_t objects;
@@ -79,6 +92,9 @@ void tick_screen_qr_wifi();
 
 void create_screen_info();
 void tick_screen_info();
+
+void create_screen_speed_test();
+void tick_screen_speed_test();
 
 void tick_screen_by_id(enum ScreensEnum screenId);
 void tick_screen(int screen_index);
