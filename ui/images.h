@@ -8,13 +8,21 @@ extern "C" {
 #endif
 
 extern const lv_img_dsc_t img_router;
-extern const lv_img_dsc_t img_inbox;
-extern const lv_img_dsc_t img_message;
 extern const lv_img_dsc_t img_thermometer;
 extern const lv_img_dsc_t img_horizontal_rule;
 extern const lv_img_dsc_t img_wi_fi;
 extern const lv_img_dsc_t img_back;
 extern const lv_img_dsc_t img_info;
+extern const lv_img_dsc_t img_ram;
+extern const lv_img_dsc_t img_cpu;
+extern const lv_img_dsc_t img_sim;
+extern const lv_img_dsc_t img_imei;
+extern const lv_img_dsc_t img_me;
+extern const lv_img_dsc_t img_wi_fi_2_g;
+extern const lv_img_dsc_t img_wi_fi_5_g;
+extern const lv_img_dsc_t img_start;
+extern const lv_img_dsc_t img_wi_fi_device;
+extern const lv_img_dsc_t img_network;
 
 #ifndef EXT_IMG_DESC_T
 #define EXT_IMG_DESC_T
@@ -24,7 +32,7 @@ typedef struct _ext_img_desc_t {
 } ext_img_desc_t;
 #endif
 
-extern const ext_img_desc_t images[8];
+extern const ext_img_desc_t images[16];
 
 #ifdef __cplusplus
 }

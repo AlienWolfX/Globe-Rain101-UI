@@ -12,13 +12,21 @@
     "ui.c",
     "ui.h",
     "ui_image_back.c",
+    "ui_image_cpu.c",
     "ui_image_horizontal_rule.c",
-    "ui_image_inbox.c",
+    "ui_image_imei.c",
     "ui_image_info.c",
-    "ui_image_message.c",
+    "ui_image_me.c",
+    "ui_image_network.c",
+    "ui_image_ram.c",
     "ui_image_router.c",
+    "ui_image_sim.c",
+    "ui_image_start.c",
     "ui_image_thermometer.c",
     "ui_image_wi_fi.c",
+    "ui_image_wi_fi_2_g.c",
+    "ui_image_wi_fi_5_g.c",
+    "ui_image_wi_fi_device.c",
     "vars.h"
   ]
 }
