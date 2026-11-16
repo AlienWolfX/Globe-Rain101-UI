@@ -2,6 +2,13 @@
 
 The Globe the101 modem features a circular display with touch support. As a curious individual, I wanted to find a way to modify its default UI. It took me a while to discover that the UI uses LVGL. Once I found out, I immediately set up a development environment with the latest version of LVGL and ran a simple display on the device, which worked. Next, I added the UI, but it kept getting stuck because of a known bug. After patching the bug and recompiling, it worked. That brings us to this journey.
 
+| Screen        | Image                           |
+| ------------- | ------------------------------- |
+| Main          | ![Main](img/main.png)           |
+| Settings      | ![Settings](img/settings.png)   |
+| Scan Wi-Fi QR | ![QR](img/wifi_connect.png)     |
+| Device Info   | ![DevInfo](img/device_info.png) |
+
 ## Setting up
 
 In order to compile lvgl we need the `toolchain-aarch64_generic_gcc-7.5.0_musl` which can be found on `openwrt-sdk-19.07.10-armvirt-64_gcc-7.5.0_musl.Linux-x86_64` SDK and LVGL 9x, after setting up we should export the path if you cloned this repository and is inside the `rain101-ui` you need to run:
