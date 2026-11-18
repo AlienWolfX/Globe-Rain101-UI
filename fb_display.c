@@ -11,7 +11,6 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
-#include <time.h>
 #include <unistd.h>
 
 typedef enum {
@@ -28,6 +27,19 @@ static uint32_t fb_bytes_per_pixel;
 static struct fb_var_screeninfo vinfo;
 static commit_mode_t commit_mode = COMMIT_PAN;
 static void *draw_buf;
+
+static void fb_cleanup(void) {
+    free(draw_buf);
+    draw_buf = NULL;
+    if (fb_mem && fb_mem != MAP_FAILED) {
+        munmap(fb_mem, fb_mem_size);
+    }
+    fb_mem = NULL;
+    if (fb_fd >= 0) {
+        close(fb_fd);
+        fb_fd = -1;
+    }
+}
 
 static void commit_frame(void) {
     switch (commit_mode) {
@@ -93,7 +105,7 @@ lv_display_t *fb_display_create(const char *fb_path) {
     if (ioctl(fb_fd, FBIOGET_VSCREENINFO, &vinfo) != 0 ||
         ioctl(fb_fd, FBIOGET_FSCREENINFO, &finfo) != 0) {
         perror("[fb] get screen info");
-        close(fb_fd);
+        fb_cleanup();
         return NULL;
     }
 
@@ -108,14 +120,15 @@ lv_display_t *fb_display_create(const char *fb_path) {
         color_format = LV_COLOR_FORMAT_RGB565;
     } else {
         fprintf(stderr, "[fb] unsupported bpp %u\n", vinfo.bits_per_pixel);
-        close(fb_fd);
+        fb_cleanup();
         return NULL;
     }
 
     fb_mem = mmap(NULL, fb_mem_size, PROT_READ | PROT_WRITE, MAP_SHARED, fb_fd, 0);
     if (fb_mem == MAP_FAILED) {
         perror("[fb] mmap");
-        close(fb_fd);
+        fb_mem = NULL;
+        fb_cleanup();
         return NULL;
     }
 
@@ -131,17 +144,15 @@ lv_display_t *fb_display_create(const char *fb_path) {
     buf_size = (size_t)vinfo.xres * vinfo.yres * fb_bytes_per_pixel;
     buf_size = (buf_size + 63) & ~(size_t)63;
     if (posix_memalign(&draw_buf, 64, buf_size) != 0) {
+        draw_buf = NULL;
         fprintf(stderr, "[fb] draw buffer alloc failed\n");
-        munmap(fb_mem, fb_mem_size);
-        close(fb_fd);
+        fb_cleanup();
         return NULL;
     }
 
     disp = lv_display_create((int32_t)vinfo.xres, (int32_t)vinfo.yres);
     if (!disp) {
-        free(draw_buf);
-        munmap(fb_mem, fb_mem_size);
-        close(fb_fd);
+        fb_cleanup();
         return NULL;
     }
     lv_display_set_color_format(disp, color_format);

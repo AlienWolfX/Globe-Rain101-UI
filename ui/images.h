@@ -28,6 +28,11 @@ extern const lv_img_dsc_t img_upload;
 extern const lv_img_dsc_t img_ping;
 extern const lv_img_dsc_t img_speed_test;
 extern const lv_img_dsc_t img_start_test;
+extern const lv_img_dsc_t img_no_sim;
+extern const lv_img_dsc_t img_uptime;
+extern const lv_img_dsc_t img_combo;
+extern const lv_img_dsc_t img_data_usage;
+extern const lv_img_dsc_t img_metrics;
 
 #ifndef EXT_IMG_DESC_T
 #define EXT_IMG_DESC_T
@@ -37,7 +42,7 @@ typedef struct _ext_img_desc_t {
 } ext_img_desc_t;
 #endif
 
-extern const ext_img_desc_t images[21];
+extern const ext_img_desc_t images[26];
 
 #ifdef __cplusplus
 }

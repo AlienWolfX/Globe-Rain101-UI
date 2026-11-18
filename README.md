@@ -2,12 +2,13 @@
 
 The Globe the101 modem features a circular display with touch support. As a curious individual, I wanted to find a way to modify its default UI. It took me a while to discover that the UI uses LVGL. Once I found out, I immediately set up a development environment with the latest version of LVGL and ran a simple display on the device, which worked. Next, I added the UI, but it kept getting stuck because of a known bug. After patching the bug and recompiling, it worked. That brings us to this journey.
 
-| Screen        | Image                           |
-| ------------- | ------------------------------- |
-| Main          | ![Main](img/main.png)           |
-| Settings      | ![Settings](img/settings.png)   |
-| Scan Wi-Fi QR | ![QR](img/wifi_connect.png)     |
-| Device Info   | ![DevInfo](img/device_info.png) |
+| Screen        | Image                             |
+| ------------- | --------------------------------- |
+| Main          | ![Main](img/main.png)             |
+| Settings      | ![Settings](img/settings.png)     |
+| Speed Test    | ![Speed Test](img/speed_test.png) |
+| Scan Wi-Fi QR | ![QR](img/wifi_connect.png)       |
+| Device Info   | ![DevInfo](img/device_info.png)   |
 
 ## Setting up
 
@@ -40,3 +41,7 @@ Backend Used:
 | Backend                               | What it does                               |
 | ------------------------------------- | ------------------------------------------ |
 | ubus -S call mtk.cell get_device_info | returns a cellular modem diagnostic report |
+
+## Misc
+
+Device has a unpopulated header pin for a fan with speed control
